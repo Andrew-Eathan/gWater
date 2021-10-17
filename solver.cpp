@@ -9,16 +9,13 @@ NvFlexSolverDesc Solver::solverDesc;
 NvFlexParams* Solver::solverParams = nullptr;
 
 int Solver::particleCount = 0;
+int Solver::maxParticles = 65536;
 float Solver::planeDepth = 12288.f;
 bool Solver::Valid = false;
 bool Solver::Running = false;
 
-NvFlexBuffer* Solver::particleBuffer = nullptr;
-NvFlexBuffer* Solver::velocityBuffer = nullptr;
-NvFlexBuffer* Solver::phaseBuffer = nullptr;
-NvFlexBuffer* Solver::activeBuffer = nullptr;
-
 float4* Solver::publicParticles = nullptr;
+Solver::simBuffers* Solver::flex_buffers = nullptr;
 std::mutex* Solver::threadMutex = nullptr;
 std::thread* Solver::threadWorker = nullptr;
 
@@ -43,13 +40,21 @@ void Solver::Initialise() {
 	solver = NvFlexCreateSolver(library, &solverDesc);
 
 	NvFlexSetParams(solver, solverParams);
+	flex_buffers = AllocBuffers(library);
 
-	particleBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(float4), eNvFlexBufferHost);
-	velocityBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(float3), eNvFlexBufferHost);
-	phaseBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(int), eNvFlexBufferHost);
-	activeBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(int), eNvFlexBufferHost);
-	publicParticles = stcast<float4*>(malloc(sizeof(float4) * 65536));
+	flex_buffers->particleBuffer.resize(maxParticles);
+	flex_buffers->velocityBuffer.resize(maxParticles);
+	flex_buffers->phaseBuffer.resize(maxParticles);
+	flex_buffers->activeBuffer.resize(maxParticles);
 
+	flex_buffers->geometryBuffer.resize(10);
+	flex_buffers->positionsBuffer.resize(10);
+	flex_buffers->rotationsBuffer.resize(10);
+	flex_buffers->prevPositionsBuffer.resize(10);
+	flex_buffers->prevRotationsBuffer.resize(10);
+	flex_buffers->flagsBuffer.resize(10);
+
+	publicParticles = stcast<float4*>(malloc(sizeof(float4) * maxParticles));
 	particleQueue = std::vector<QueuedParticle>();
 
 	Valid = true;
@@ -83,36 +88,27 @@ void Solver::ThreadMethod() {
 
 		bool nulptr = false;
 
-		if (particleBuffer == nullptr || velocityBuffer == nullptr || phaseBuffer == nullptr || activeBuffer == nullptr) {
-			LUA_Print("ERROR: One of the four main buffers is NULLPTR!");
-		}
-
 		threadMutex->lock();
 			timePoint timeStart = curtime();
-			float4* particles = (float4*)(NvFlexMap(particleBuffer, eNvFlexMapWait));
-			float3* velocities = (float3*)(NvFlexMap(velocityBuffer, eNvFlexMapWait));
-			int* phases = (int*)(NvFlexMap(phaseBuffer, eNvFlexMapWait));
-			int* activeIndices = (int*)(NvFlexMap(activeBuffer, eNvFlexMapWait));
+			MapBuffers(flex_buffers);
 
 			///////// PROCESS QUEUE DATA /////////
 			// Action Queue
 			for (const auto& action : actionQueue) {
 				switch (action) {
 				case ActionQueue::CleanParticles:
-					memset(particles, 0, particleCount);
-					memset(velocities, 0, particleCount);
-					memset(phases, 0, particleCount);
-					memset(activeIndices, 0, particleCount);
+					ClearBuffers(flex_buffers);
+					MapBuffers(flex_buffers);
 					particleCount = 0;
 					break;
 				}
 			}
 			// Particle Creation Queue
 			for (const auto& particle : particleQueue) {
-				particles[particleCount] = float4{ particle.data.x, particle.data.y, particle.data.z, particle.data.invMass };
-				velocities[particleCount] = particle.vel;
-				phases[particleCount] = NvFlexMakePhase(0, eNvFlexPhaseSelfCollide | eNvFlexPhaseFluid);
-				activeIndices[particleCount] = particleCount;
+				flex_buffers->particleBuffer.push_back(float4(particle.data.x, particle.data.y, particle.data.z, particle.data.invMass));
+				flex_buffers->velocityBuffer.push_back(particle.vel);
+				flex_buffers->phaseBuffer.push_back(NvFlexMakePhase(0, eNvFlexPhaseSelfCollide | eNvFlexPhaseFluid));
+				flex_buffers->activeBuffer.push_back(particleCount);
 
 				particleCount++;
 			}
@@ -122,21 +118,20 @@ void Solver::ThreadMethod() {
 			particleQueue.clear();
 			//////////////////////////////////////
 			
-
-			memcpy(publicParticles, particles, sizeof(float4) * particleCount);
+			flex_buffers->particleBuffer.copyto(publicParticles, particleCount);
 
 			// unmap buffers
-			NvFlexUnmap(particleBuffer);
-			NvFlexUnmap(velocityBuffer);
-			NvFlexUnmap(phaseBuffer);
-			NvFlexUnmap(activeBuffer);
+			UnmapBuffers(flex_buffers);
 
 			// write to device (async)	
-			NvFlexSetParticles(solver, particleBuffer, NULL);
-			NvFlexSetVelocities(solver, velocityBuffer, NULL);
-			NvFlexSetPhases(solver, phaseBuffer, NULL);
-			NvFlexSetActive(solver, activeBuffer, NULL);
+			NvFlexSetParticles(solver, flex_buffers->particleBuffer.buffer, NULL);
+			NvFlexSetVelocities(solver, flex_buffers->velocityBuffer.buffer, NULL);
+			NvFlexSetPhases(solver, flex_buffers->phaseBuffer.buffer, NULL);
+			NvFlexSetActive(solver, flex_buffers->activeBuffer.buffer, NULL);
 			NvFlexSetActiveCount(solver, particleCount);
+
+			// send shapes to Flex
+			NvFlexSetShapes(solver, flex_buffers->geometryBuffer.buffer, flex_buffers->positionsBuffer.buffer, flex_buffers->rotationsBuffer.buffer, NULL, NULL, flex_buffers->flagsBuffer.buffer, 1);
 
 			timePoint timeEnd = curtime();
 			std::chrono::milliseconds diff = std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - timeStart);
@@ -145,29 +140,30 @@ void Solver::ThreadMethod() {
 			NvFlexUpdateSolver(solver, (spt + diff.count() > 0 ? (float)diff.count() / (float)1000 : 0) * 5, 4, false);
 
 			// read back (async)
-			NvFlexGetParticles(solver, particleBuffer, NULL);
-			NvFlexGetVelocities(solver, velocityBuffer, NULL);
-			NvFlexGetPhases(solver, phaseBuffer, NULL);
+ 			NvFlexGetParticles(solver, flex_buffers->particleBuffer.buffer, NULL);
+			NvFlexGetVelocities(solver, flex_buffers->velocityBuffer.buffer, NULL);
+			NvFlexGetPhases(solver, flex_buffers->phaseBuffer.buffer, NULL);
 		threadMutex->unlock();
 
-		if (diff.count() - tps > 0) Sleep(tps - diff.count());
+		if (diff.count() - tps > 0) Sleep(tps - (int)diff.count());
 	}
 
 	Valid = false;
 }
 
 void Solver::Destroy() {
-	if (library != nullptr) {
+	if (library != nullptr || Valid) {
 		//cleanup
 		Valid = false;
 		Running = false;
 		particleCount = 0;
 		
-		threadMutex->lock();
-			NvFlexDestroySolver(solver);
-			delete solverParams;
-			delete threadWorker;
-		threadMutex->unlock();
+	threadMutex->lock();
+		delete solverParams;
+		delete threadWorker;
+		NvFlexDestroySolver(solver);
+		NvFlexShutdown(library);
+	threadMutex->unlock();
 	}
 }
 
@@ -175,8 +171,70 @@ NvFlexSolverDesc Solver::CreateSolverDesc() {
 	NvFlexSolverDesc desc;
 	NvFlexSetSolverDescDefaults(&desc);
 
-	desc.maxParticles = 65536;
+	desc.maxParticles = maxParticles;
 	desc.maxDiffuseParticles = 0;
 
 	return desc;
+}
+
+Solver::simBuffers* Solver::AllocBuffers(NvFlexLibrary* lib) {
+	return new Solver::simBuffers(lib);
+}
+
+//yucky but must be done
+void Solver::MapBuffers(simBuffers* buffers) {
+	buffers->particleBuffer.map();
+	buffers->velocityBuffer.map();
+	buffers->phaseBuffer.map();
+	buffers->activeBuffer.map();
+
+	buffers->flagsBuffer.map();
+	buffers->geometryBuffer.map();
+	buffers->positionsBuffer.map();
+	buffers->rotationsBuffer.map();
+	buffers->prevPositionsBuffer.map();
+	buffers->prevRotationsBuffer.map();
+}
+
+void Solver::UnmapBuffers(simBuffers* buffers) {
+	buffers->particleBuffer.unmap();
+	buffers->velocityBuffer.unmap();
+	buffers->phaseBuffer.unmap();
+	buffers->activeBuffer.unmap();
+
+	buffers->flagsBuffer.unmap();
+	buffers->geometryBuffer.unmap();
+	buffers->positionsBuffer.unmap();
+	buffers->rotationsBuffer.unmap();
+	buffers->prevPositionsBuffer.unmap();
+	buffers->prevRotationsBuffer.unmap();
+}
+
+void Solver::DestroyBuffers(simBuffers* buffers) {
+	buffers->particleBuffer.destroy();
+	buffers->velocityBuffer.destroy();
+	buffers->phaseBuffer.destroy();
+	buffers->activeBuffer.destroy();
+
+	buffers->flagsBuffer.destroy();
+	buffers->geometryBuffer.destroy();
+	buffers->positionsBuffer.destroy();
+	buffers->rotationsBuffer.destroy();
+	buffers->prevPositionsBuffer.destroy();
+	buffers->prevRotationsBuffer.destroy();
+}
+
+//hacky, but what else can i do without .clear()?
+void Solver::ClearBuffers(simBuffers* buffers) {
+	buffers->positionsBuffer.init(maxParticles);
+	buffers->velocityBuffer.init(maxParticles);
+	buffers->phaseBuffer.init(maxParticles);
+	buffers->activeBuffer.init(maxParticles);
+
+	buffers->geometryBuffer.init(10);
+	buffers->particleBuffer.init(10);
+	buffers->rotationsBuffer.init(10);
+	buffers->flagsBuffer.init(10);
+	buffers->prevPositionsBuffer.init(10);
+	buffers->prevRotationsBuffer.init(10);
 }

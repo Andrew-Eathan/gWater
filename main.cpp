@@ -33,7 +33,7 @@ using namespace GarrysMod::Lua;
 ILuaBase* GlobalLUA = nullptr;
 
 LUA_FUNCTION(Initialise) {
-	float planeDepth = LUA->GetNumber(-1);
+	float planeDepth = (float)LUA->GetNumber(-1);
 	Solver::Initialise();
 	Solver::SetPlaneDepth(planeDepth);
 	return 0;
@@ -66,6 +66,7 @@ LUA_FUNCTION(GetParticles) {
 }
 
 LUA_FUNCTION(CreateParticle) {
+	if (Solver::particleCount >= Solver::maxParticles) return 0;
 	Vector pos = LUA->GetVector(-2);
 	Vector vel = LUA->GetVector(-1);
 	QueuedParticle part;
@@ -96,6 +97,27 @@ LUA_FUNCTION(CreateCube) {
 	return 0;
 }
 
+LUA_FUNCTION(AddSphereCollider) {
+	Vector pos = LUA->GetVector(-2);
+	float radius = (float)LUA->GetNumber(-1);
+	Solver::simBuffers* g_buffers = Solver::flex_buffers;
+	
+	NvFlexCollisionGeometry geo;
+	geo.sphere.radius = radius;
+	g_buffers->geometryBuffer.push_back(geo);
+
+	g_buffers->positionsBuffer.push_back(float4(pos.x, pos.y, pos.z, 0.0f));
+	g_buffers->rotationsBuffer.push_back(float4()); //a static sphere doesn't need angles lol
+
+	g_buffers->prevPositionsBuffer.push_back(g_buffers->positionsBuffer.back());
+	g_buffers->prevRotationsBuffer.push_back(g_buffers->rotationsBuffer.back());
+
+	int flags = NvFlexMakeShapeFlags(eNvFlexShapeSphere, false);
+	g_buffers->flagsBuffer.push_back(flags);
+
+	return 0;
+}
+
 LUA_FUNCTION(CleanParticles) {
 	Solver::actionQueue.push_back(Solver::ActionQueue::CleanParticles);
 	return 0;
@@ -120,6 +142,7 @@ GMOD_MODULE_OPEN()
 	GLUA_Function(CreateParticle, "CreateParticle");
 	GLUA_Function(CreateCube, "CreateCube");
 	GLUA_Function(CleanParticles, "CleanParticles");
+	GLUA_Function(AddSphereCollider, "AddSphereCollider");
 	GLUA_Function(Destroy, "Destroy");
 
 	LUA->SetField(-2, "gwater");
