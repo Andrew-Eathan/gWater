@@ -1,0 +1,3 @@
+[submodule "include/FleX"]
+	path = include/FleX
+	url = https://github.com/NVIDIAGameWorks/FleX
