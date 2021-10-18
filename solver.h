@@ -15,6 +15,7 @@ namespace Solver {
 	
 	//config
 	extern int particleCount;
+	extern int geometryCount;
 	extern bool Valid;
 	extern bool Running;
 	extern float planeDepth;
@@ -24,11 +25,23 @@ namespace Solver {
 		CleanParticles
 	};
 
+	struct SphereCollQueue {
+		NvFlexCollisionGeometry geo;
+		float4 position;
+		float4 rotation;
+		int flags;
+	};
+
 	//buffers
 	extern NvFlexBuffer* particleBuffer;
 	extern NvFlexBuffer* velocityBuffer;
 	extern NvFlexBuffer* phaseBuffer;
 	extern NvFlexBuffer* activeBuffer;
+
+	extern NvFlexBuffer* geometryBuffer;
+	extern NvFlexBuffer* positionBuffer;
+	extern NvFlexBuffer* rotationBuffer;
+	extern NvFlexBuffer* flagsBuffer;
 	
 	//workers and data
 	extern float4* publicParticles;
@@ -38,6 +51,7 @@ namespace Solver {
 	//queues
 	extern std::vector<QueuedParticle> particleQueue;
 	extern std::vector<ActionQueue> actionQueue;
+	extern std::vector<SphereCollQueue> sphereCollQueue;
 
 	//methods
 	extern void Error(NvFlexErrorSeverity type, const char* msg, const char* file, int line);

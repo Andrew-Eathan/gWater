@@ -1,6 +1,7 @@
 #include "solver.h"
 #include "util.h"
 #include "params.h"
+#include <iostream>
 
 
 NvFlexLibrary* Solver::library = nullptr;
@@ -9,6 +10,7 @@ NvFlexSolverDesc Solver::solverDesc;
 NvFlexParams* Solver::solverParams = nullptr;
 
 int Solver::particleCount = 0;
+int Solver::geometryCount = 0;
 float Solver::planeDepth = 12288.f;
 bool Solver::Valid = false;
 bool Solver::Running = false;
@@ -18,6 +20,11 @@ NvFlexBuffer* Solver::velocityBuffer = nullptr;
 NvFlexBuffer* Solver::phaseBuffer = nullptr;
 NvFlexBuffer* Solver::activeBuffer = nullptr;
 
+NvFlexBuffer* Solver::geometryBuffer = nullptr;
+NvFlexBuffer* Solver::positionBuffer = nullptr;
+NvFlexBuffer* Solver::rotationBuffer = nullptr;
+NvFlexBuffer* Solver::flagsBuffer = nullptr;
+
 float4* Solver::publicParticles = nullptr;
 std::mutex* Solver::threadMutex = nullptr;
 std::thread* Solver::threadWorker = nullptr;
@@ -25,6 +32,7 @@ std::thread* Solver::threadWorker = nullptr;
 //queues
 std::vector<QueuedParticle> Solver::particleQueue = std::vector<QueuedParticle>();
 std::vector<Solver::ActionQueue> Solver::actionQueue = std::vector<Solver::ActionQueue>();
+std::vector<Solver::SphereCollQueue> Solver::sphereCollQueue = std::vector<Solver::SphereCollQueue>();
 
 
 
@@ -48,6 +56,12 @@ void Solver::Initialise() {
 	velocityBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(float3), eNvFlexBufferHost);
 	phaseBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(int), eNvFlexBufferHost);
 	activeBuffer = NvFlexAllocBuffer(library, solverDesc.maxParticles, sizeof(int), eNvFlexBufferHost);
+
+	geometryBuffer = NvFlexAllocBuffer(library, 30, sizeof(NvFlexCollisionGeometry), eNvFlexBufferHost);
+	positionBuffer = NvFlexAllocBuffer(library, 30, sizeof(float4), eNvFlexBufferHost);
+	rotationBuffer = NvFlexAllocBuffer(library, 30, sizeof(float4), eNvFlexBufferHost);
+	flagsBuffer = NvFlexAllocBuffer(library, 30, sizeof(int), eNvFlexBufferHost);
+
 	publicParticles = stcast<float4*>(malloc(sizeof(float4) * 65536));
 
 	particleQueue = std::vector<QueuedParticle>();
@@ -94,6 +108,11 @@ void Solver::ThreadMethod() {
 			int* phases = (int*)(NvFlexMap(phaseBuffer, eNvFlexMapWait));
 			int* activeIndices = (int*)(NvFlexMap(activeBuffer, eNvFlexMapWait));
 
+			NvFlexCollisionGeometry* geometry = (NvFlexCollisionGeometry*)(NvFlexMap(geometryBuffer, eNvFlexMapWait));
+			float4* positions = (float4*)(NvFlexMap(positionBuffer, eNvFlexMapWait));
+			float4* rotations = (float4*)(NvFlexMap(rotationBuffer, eNvFlexMapWait));
+			int* flags = (int*)(NvFlexMap(flagsBuffer, eNvFlexMapWait));
+
 			///////// PROCESS QUEUE DATA /////////
 			// Action Queue
 			for (const auto& action : actionQueue) {
@@ -116,13 +135,35 @@ void Solver::ThreadMethod() {
 
 				particleCount++;
 			}
+			// Sphere Collider Creation Queue
+			for (const auto& collider : sphereCollQueue) {
+				geometry[geometryCount] = collider.geo;
+				positions[geometryCount] = collider.position;
+				rotations[geometryCount] = collider.rotation;
+				flags[geometryCount] = collider.flags;
+
+				std::cout << "Created sphere collider " << geometryCount << std::endl;
+				std::cout << geometry[geometryCount].sphere.radius << std::endl;
+				std::cout << positions[geometryCount].x << ", " << positions[geometryCount].y << ", " << positions[geometryCount].z << std::endl;
+				std::cout << rotations[geometryCount].x << ", " << rotations[geometryCount].y << ", " << rotations[geometryCount].z << std::endl;
+				std::cout << flags[geometryCount] << std::endl;
+
+				geometryCount++;
+
+				for (int i = geometryCount; i < 33; i++) {
+					positions[geometryCount] = float4{ 0.0f, 0.0f, 0.f, 0.5f };
+					rotations[geometryCount] = float4{ 0.0f, 0.0f, 0.0f, 0.0f };
+
+					geometryCount++;
+				}
+			}
 			//////////////////////////////////////
 			// clear queues afterwards
 			actionQueue.clear();
 			particleQueue.clear();
+			sphereCollQueue.clear();
 			//////////////////////////////////////
 			
-
 			memcpy(publicParticles, particles, sizeof(float4) * particleCount);
 
 			// unmap buffers
@@ -131,12 +172,18 @@ void Solver::ThreadMethod() {
 			NvFlexUnmap(phaseBuffer);
 			NvFlexUnmap(activeBuffer);
 
+			NvFlexUnmap(geometryBuffer);
+			NvFlexUnmap(positionBuffer);
+			NvFlexUnmap(rotationBuffer);
+			NvFlexUnmap(flagsBuffer);
+
 			// write to device (async)	
 			NvFlexSetParticles(solver, particleBuffer, NULL);
 			NvFlexSetVelocities(solver, velocityBuffer, NULL);
 			NvFlexSetPhases(solver, phaseBuffer, NULL);
 			NvFlexSetActive(solver, activeBuffer, NULL);
 			NvFlexSetActiveCount(solver, particleCount);
+			NvFlexSetShapes(solver, geometryBuffer, positionBuffer, rotationBuffer, NULL, NULL, flagsBuffer, geometryCount);
 
 			timePoint timeEnd = curtime();
 			std::chrono::milliseconds diff = std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - timeStart);
@@ -150,7 +197,7 @@ void Solver::ThreadMethod() {
 			NvFlexGetPhases(solver, phaseBuffer, NULL);
 		threadMutex->unlock();
 
-		if (diff.count() - tps > 0) Sleep(tps - diff.count());
+		if (diff.count() - tps > 0) Sleep(tps - (int)diff.count());
 	}
 
 	Valid = false;
@@ -162,6 +209,7 @@ void Solver::Destroy() {
 		Valid = false;
 		Running = false;
 		particleCount = 0;
+		geometryCount = 0;
 		
 		threadMutex->lock();
 			NvFlexDestroySolver(solver);

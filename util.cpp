@@ -1,4 +1,5 @@
 #include "util.h"
+#include <iostream>
 
 void LUA_Print(std::string text)
 {
@@ -7,6 +8,7 @@ void LUA_Print(std::string text)
 	GlobalLUA->PushString(text.c_str());
 	GlobalLUA->Call(1, 0);
 	GlobalLUA->Pop();
+	std::cout << text << std::endl;
 }
 
 void LUA_Print(char* text)
@@ -16,6 +18,7 @@ void LUA_Print(char* text)
 	GlobalLUA->PushString(text);
 	GlobalLUA->Call(1, 0);
 	GlobalLUA->Pop();
+	std::cout << text << std::endl;
 }
 
 void LUA_Print(int num)
@@ -25,6 +28,7 @@ void LUA_Print(int num)
 	GlobalLUA->PushString(std::to_string(num).c_str());
 	GlobalLUA->Call(1, 0);
 	GlobalLUA->Pop();
+	std::cout << num << std::endl;
 }
 
 std::string FLEX_GetErrorType(NvFlexErrorSeverity type) {

@@ -25,6 +25,7 @@
 #include "GarrysMod/Lua/Interface.h"
 #include "util.h"
 #include "solver.h"
+#include <Windows.h>
 #include <string>
 using namespace GarrysMod::Lua;
 
@@ -33,7 +34,7 @@ using namespace GarrysMod::Lua;
 ILuaBase* GlobalLUA = nullptr;
 
 LUA_FUNCTION(Initialise) {
-	float planeDepth = LUA->GetNumber(-1);
+	float planeDepth = (float)LUA->GetNumber(-1);
 	Solver::Initialise();
 	Solver::SetPlaneDepth(planeDepth);
 	return 0;
@@ -106,9 +107,27 @@ LUA_FUNCTION(Destroy) {
 	return 0;
 }
 
+LUA_FUNCTION(AddSphereCollider) {
+	Vector pos = LUA->GetVector(-2);
+	float radius = (float)LUA->GetNumber(-1);
+	Solver::SphereCollQueue coll;
+	coll.geo.sphere.radius = radius;
+
+	coll.position = float4(pos.x, pos.y, pos.z, 0.5f);
+	coll.rotation = float4();
+	
+	coll.flags = NvFlexMakeShapeFlags(eNvFlexShapeSphere, false);
+	Solver::sphereCollQueue.push_back(coll);
+	return 0;
+}
+
 // Called when the module is loaded
 GMOD_MODULE_OPEN()
 {
+	AllocConsole();
+	FILE* pFile = nullptr;
+	freopen_s(&pFile, "CONOUT$", "w", stdout);
+
 	GlobalLUA = LUA;
 	LUA_Print("Module opened");
 	LUA->PushSpecial(SPECIAL_GLOB);
@@ -120,6 +139,7 @@ GMOD_MODULE_OPEN()
 	GLUA_Function(CreateParticle, "CreateParticle");
 	GLUA_Function(CreateCube, "CreateCube");
 	GLUA_Function(CleanParticles, "CleanParticles");
+	GLUA_Function(AddSphereCollider, "AddSphereCollider");
 	GLUA_Function(Destroy, "Destroy");
 
 	LUA->SetField(-2, "gwater");
@@ -132,6 +152,7 @@ GMOD_MODULE_OPEN()
 GMOD_MODULE_CLOSE()
 {
 	LUA_Print("Module closed");
+	FreeConsole();
 	Solver::Destroy();
 	return 0;
 }
