@@ -13,11 +13,11 @@ NvFlexParams* Solver::CreateSolverParams(float planeDepth) {
 	params->wind[2] = 0.0f;
 
 	params->radius = 10.f;
-	params->viscosity = 0.005f;
-	params->dynamicFriction = 0.1f;
-	params->staticFriction = 0.1f;
-	params->particleFriction = 0.1f; // scale friction between particles by default
-	params->freeSurfaceDrag = 0.1f;
+	params->viscosity = 0.002f;
+	params->dynamicFriction = 0.05f;
+	params->staticFriction = 0.05f;
+	params->particleFriction = 0.02f; // scale friction between particles by default
+	params->freeSurfaceDrag = 0.07f;
 	params->drag = 0.0f;
 	params->lift = 1.0f;
 	params->numIterations = 4;
@@ -33,7 +33,7 @@ NvFlexParams* Solver::CreateSolverParams(float planeDepth) {
 	params->damping = 0.0f;
 	params->particleCollisionMargin = 0.2f;
 	params->shapeCollisionMargin = 1.0f;
-	params->collisionDistance = 1.f; // Needed for tri-particle intersection
+	params->collisionDistance = params->radius * 0.25f;
 	params->sleepThreshold = 0.0f;
 	params->shockPropagation = 0.0f;
 	params->restitution = 0.0f;
@@ -43,7 +43,7 @@ NvFlexParams* Solver::CreateSolverParams(float planeDepth) {
 	params->relaxationMode = eNvFlexRelaxationLocal;
 	params->relaxationFactor = 1.0f;
 	params->solidPressure = 1.0f;
-	params->adhesion = 0.005f;
+	params->adhesion = 0.003f;
 	params->cohesion = 0.015f;
 	params->surfaceTension = 0.0f;
 	params->vorticityConfinement = 0.0f;

@@ -83,11 +83,12 @@ LUA_FUNCTION(CreateCube) {
 	Vector pos = LUA->GetVector(-3);
 	Vector size = LUA->GetVector(-2);
 	Vector vel = LUA->GetVector(-1);
+	float radius = Solver::solverParams->radius;
 	QueuedParticle part;
 
-	for (float z = -size.z; z < size.z; z++)
-		for (float y = -size.y; y < size.y; y++)
-			for (float x = -size.x; x < size.x; x++) {
+	for (float z = -size.z * radius; z < size.z * radius; z++)
+		for (float y = -size.y * radius; y < size.y * radius; y++)
+			for (float x = -size.x * radius; x < size.x * radius; x++) {
 				part.data = *new Particle{ x + pos.x, y + pos.y, z + pos.z, 0.5f };
 				part.vel = *new float3{ vel.x, vel.y, vel.z };
 
@@ -99,6 +100,17 @@ LUA_FUNCTION(CreateCube) {
 
 LUA_FUNCTION(CleanParticles) {
 	Solver::actionQueue.push_back(Solver::ActionQueue::CleanParticles);
+	return 0;
+}
+
+LUA_FUNCTION(ParticleRadius) {
+	float radius = (float)LUA->GetNumber();
+	Solver::threadMutex->lock();
+	Solver::solverParams->radius = radius;
+	Solver::solverParams->fluidRestDistance = radius * 0.6f;
+	Solver::solverParams->collisionDistance = radius * 0.25f;
+	NvFlexSetParams(Solver::solver, Solver::solverParams);
+	Solver::threadMutex->unlock();
 	return 0;
 }
 
@@ -140,6 +152,7 @@ GMOD_MODULE_OPEN()
 	GLUA_Function(CreateCube, "CreateCube");
 	GLUA_Function(CleanParticles, "CleanParticles");
 	GLUA_Function(AddSphereCollider, "AddSphereCollider");
+	GLUA_Function(ParticleRadius, "ParticleRadius");
 	GLUA_Function(Destroy, "Destroy");
 
 	LUA->SetField(-2, "gwater");

@@ -10,7 +10,7 @@ NvFlexSolverDesc Solver::solverDesc;
 NvFlexParams* Solver::solverParams = nullptr;
 
 int Solver::particleCount = 0;
-int Solver::geometryCount = 0;
+int Solver::geometryCount = 1;
 float Solver::planeDepth = 12288.f;
 bool Solver::Valid = false;
 bool Solver::Running = false;
@@ -148,14 +148,13 @@ void Solver::ThreadMethod() {
 				std::cout << rotations[geometryCount].x << ", " << rotations[geometryCount].y << ", " << rotations[geometryCount].z << std::endl;
 				std::cout << flags[geometryCount] << std::endl;
 
-				geometryCount++;
-
-				for (int i = geometryCount; i < 33; i++) {
-					positions[geometryCount] = float4{ 0.0f, 0.0f, 0.f, 0.5f };
-					rotations[geometryCount] = float4{ 0.0f, 0.0f, 0.0f, 0.0f };
-
-					geometryCount++;
+				//I HAD TO :YIKE:
+				//hacky fix by mee
+				for (int i = 0; i < 100; i++) {
+					positions[i] = float4{ 0.0f, 0.0f, 0.f, 1.f };
 				}
+
+				geometryCount++;
 			}
 			//////////////////////////////////////
 			// clear queues afterwards
@@ -165,6 +164,8 @@ void Solver::ThreadMethod() {
 			//////////////////////////////////////
 			
 			memcpy(publicParticles, particles, sizeof(float4) * particleCount);
+			NvFlexCopyDesc copydesc;
+			copydesc.elementCount = particleCount;
 
 			// unmap buffers
 			NvFlexUnmap(particleBuffer);
@@ -178,10 +179,10 @@ void Solver::ThreadMethod() {
 			NvFlexUnmap(flagsBuffer);
 
 			// write to device (async)	
-			NvFlexSetParticles(solver, particleBuffer, NULL);
-			NvFlexSetVelocities(solver, velocityBuffer, NULL);
-			NvFlexSetPhases(solver, phaseBuffer, NULL);
-			NvFlexSetActive(solver, activeBuffer, NULL);
+			NvFlexSetParticles(solver, particleBuffer, &copydesc);
+			NvFlexSetVelocities(solver, velocityBuffer, &copydesc);
+			NvFlexSetPhases(solver, phaseBuffer, &copydesc);
+			NvFlexSetActive(solver, activeBuffer, &copydesc);
 			NvFlexSetActiveCount(solver, particleCount);
 			NvFlexSetShapes(solver, geometryBuffer, positionBuffer, rotationBuffer, NULL, NULL, flagsBuffer, geometryCount);
 
@@ -189,7 +190,7 @@ void Solver::ThreadMethod() {
 			std::chrono::milliseconds diff = std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - timeStart);
 
 			// tick the solver
-			NvFlexUpdateSolver(solver, (spt + diff.count() > 0 ? (float)diff.count() / (float)1000 : 0) * 5, 4, false);
+			NvFlexUpdateSolver(solver, (spt + diff.count() > 0 ? (float)diff.count() / (float)1000 : 0) * 5.5, 4, false);
 
 			// read back (async)
 			NvFlexGetParticles(solver, particleBuffer, NULL);
@@ -209,7 +210,7 @@ void Solver::Destroy() {
 		Valid = false;
 		Running = false;
 		particleCount = 0;
-		geometryCount = 0;
+		geometryCount = 1;
 		
 		threadMutex->lock();
 			NvFlexDestroySolver(solver);
